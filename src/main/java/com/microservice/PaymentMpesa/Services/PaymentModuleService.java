@@ -1,6 +1,9 @@
 package com.microservice.PaymentMpesa.Services;
 
+import com.microservice.PaymentMpesa.DTO.ExternalStkPushRequest;
 import com.microservice.PaymentMpesa.DTO.PaymentRequestDTO;
+import com.microservice.PaymentMpesa.DTO.StkPushSyncResponse;
+import com.microservice.PaymentMpesa.Utils.Constants;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
@@ -12,6 +15,9 @@ import org.springframework.web.client.RestTemplate;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Objects;
+
+import static com.microservice.PaymentMpesa.Utils.Constants.*;
 
 @Service
 public class PaymentModuleService {
@@ -29,9 +35,9 @@ public class PaymentModuleService {
                 "\"TransactionType\": " +
                 "\"CustomerPayBillOnline\", " +
                 "\"Amount\": 1, "                                                                                                                                                                                                                                                                            +
-                "\"PartyA\": 254711694281, " +
+                "\"PartyA\": 254743888952, " +
                 "\"PartyB\": 174379, " +
-                "\"PhoneNumber\": 254711694281, " +
+                "\"PhoneNumber\": 254743888952, " +
                 "\"CallBackURL\": \"https://mydomain.com/path\", " +
                 "\"AccountReference\": " +
                 "\"CompanyXLTD\", " +
@@ -55,7 +61,50 @@ public class PaymentModuleService {
     }
 
 
+    @Override
+    public StkPushSyncResponse performStkPushTransaction(InternalStkPushRequest internalStkPushRequest) {
+        ExternalStkPushRequest externalStkPushRequest = new ExternalStkPushRequest();
+        externalStkPushRequest.setBusinessShortCode(mpesaConfiguration.getStkPushShortCode());
 
+        String transactionTimestamp = HelperUtility.getTransactionTimestamp();
+        String stkPushPassword = HelperUtility.getStkPushPassword(mpesaConfiguration.getStkPushShortCode(),
+                mpesaConfiguration.getStkPassKey(), transactionTimestamp);
+
+        externalStkPushRequest.setPassword(stkPushPassword);
+        externalStkPushRequest.setTimestamp(transactionTimestamp);
+        externalStkPushRequest.setTransactionType(Constants.CUSTOMER_PAYBILL_ONLINE);
+        externalStkPushRequest.setAmount(internalStkPushRequest.getAmount());
+        externalStkPushRequest.setPartyA(internalStkPushRequest.getPhoneNumber());
+        externalStkPushRequest.setPartyB(mpesaConfiguration.getStkPushShortCode());
+        externalStkPushRequest.setPhoneNumber(internalStkPushRequest.getPhoneNumber());
+        externalStkPushRequest.setCallBackURL(mpesaConfiguration.getStkPushRequestCallbackUrl());
+        externalStkPushRequest.setAccountReference(HelperUtility.getTransactionUniqueNumber());
+        externalStkPushRequest.setTransactionDesc(String.format("%s Transaction", internalStkPushRequest.getPhoneNumber()));
+
+        AccessTokenResponse accessTokenResponse = getAccessToken();
+
+        RequestBody body = RequestBody.create(JSON_MEDIA_TYPE,
+                Objects.requireNonNull(HelperUtility.toJson(externalStkPushRequest)));
+
+        Request request = new Request.Builder()
+                .url(mpesaConfiguration.getStkPushRequestUrl())
+                .post(body)
+                .addHeader(AUTHORIZATION_HEADER_STRING, String.format("%s %s", BEARER_AUTH_STRING, accessTokenResponse.getAccessToken()))
+                .build();
+
+
+        try {
+            Response response = okHttpClient.newCall(request).execute();
+            assert response.body() != null;
+            // use Jackson to Decode the ResponseBody ...
+
+            return objectMapper.readValue(response.body().string(), StkPushSyncResponse.class);
+        } catch (IOException e) {
+            log.error(String.format("Could not perform the STK push request -> %s", e.getLocalizedMessage()));
+            return null;
+        }
+
+    }
 
 
     // Process MPESA API response and update system
